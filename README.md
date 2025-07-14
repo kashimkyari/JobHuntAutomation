@@ -212,4 +212,4 @@ Update nodes:
 - Monitor API limits (LinkedIn: 100 calls/day, Adzuna: 250 calls/day).
 - Test one node at a time.
 - Backup Notion tables.
-# JobHuntAutomation
+
