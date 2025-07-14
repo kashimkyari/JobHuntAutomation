@@ -1,0 +1,599 @@
+{
+  "name": "Optimized Job Hunting Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "interval": 240,
+        "unit": "minutes"
+      },
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [100, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "job",
+        "operation": "search",
+        "query": "keywords=AI+Engineer|ML+Engineer|Python+Developer|Data+Scientist|Cybersecurity+Analyst|Security+Engineer|Threat+Intelligence+Specialist&location=Europe|North+America&workplaceType=remote,hybrid",
+        "options": {
+          "retryOnFail": true,
+          "maxRetries": 3,
+          "retryDelay": 1000
+        }
+      },
+      "name": "LinkedIn Jobs API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [300, 100],
+      "credentials": {
+        "httpRequestOAuth2Api": "LinkedIn API"
+      },
+      "onError": "continue"
+    },
+    {
+      "parameters": {
+        "authentication": "apiKey",
+        "resource": "job",
+        "operation": "search",
+        "query": "what=AI+Engineer|ML+Engineer|Python+Developer|Data+Scientist|Cybersecurity+Analyst|Security+Engineer|Threat+Intelligence+Specialist&where=Europe|North+America&remote=1&salary_min=48000",
+        "options": {
+          "retryOnFail": true,
+          "maxRetries": 3,
+          "retryDelay": 1000
+        }
+      },
+      "name": "Adzuna API (Indeed)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [300, 300],
+      "credentials": {
+        "httpRequestApiKey": "Adzuna API"
+      },
+      "onError": "continue"
+    },
+    {
+      "parameters": {
+        "operation": "merge",
+        "mode": "mergeByIndex",
+        "inputs": [
+          "{{$node['LinkedIn Jobs API'].json.results || []}}",
+          "{{$node['Adzuna API (Indeed)'].json.results || []}}"
+        ]
+      },
+      "name": "Merge Job Listings",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 1,
+      "position": [500, 200]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "{{$json.description || ''}}",
+              "operation": "notContains",
+              "value2": "frontend|Front+End|React|Angular|Vue|UI/UX|intern|unpaid"
+            },
+            {
+              "value1": "{{$json.location || ''}}",
+              "operation": "contains",
+              "value2": "remote|hybrid"
+            }
+          ],
+          "number": [
+            {
+              "value1": "{{$json.salary_min || 0}}",
+              "operation": "greaterThanEqual",
+              "value2": 48000
+            }
+          ]
+        }
+      },
+      "name": "Filter Jobs",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [700, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const scoreJob = (job) => {\n  const desc = (job.description || '').toLowerCase();\n  let score = 0;\n  if (/ai|machine learning/.test(desc)) score += 30;\n  if (/python/.test(desc)) score += 20;\n  if (/cybersecurity|security|threat intelligence/.test(desc)) score += 30;\n  return { ...job, score, source: job.source || 'Unknown' };\n};\nreturn items.map(item => ({ json: scoreJob(item.json) }));\n"
+      },
+      "name": "Score Jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "database",
+        "operation": "create",
+        "databaseId": "{{your_notion_job_database_id}}",
+        "properties": {
+          "Title": { "title": [{ "text": { "content": "{{$json.title}}" } }] },
+          "Company": { "rich_text": [{ "text": { "content": "{{$json.company_name}}" } }] },
+          "Location": { "rich_text": [{ "text": { "content": "{{$json.location}}" } }] },
+          "Salary": { "number": "{{$json.salary_min || 0}}" },
+          "Score": { "number": "{{$json.score}}" },
+          "Application Status": { "select": { "name": "Not Applied" } },
+          "Application Date": { "date": null },
+          "Response Date": { "date": null },
+          "URL": { "url": "{{$json.job_url}}" },
+          "Source": { "rich_text": [{ "text": { "content": "{{$json.source}}" } }] }
+        },
+        "options": {
+          "batch": true,
+          "batchSize": 50
+        }
+      },
+      "name": "Save to Notion",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 1,
+      "position": [1100, 200],
+      "credentials": {
+        "notionApi": "Notion API"
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "{{$json.score}}",
+              "operation": "greaterThanEqual",
+              "value2": 80
+            }
+          ]
+        }
+      },
+      "name": "Filter Top Matches",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1300, 200]
+    },
+    {
+      "parameters": {
+        "authentication": "apiKey",
+        "chatId": "{{your_telegram_chat_id}}",
+        "text": "New top job match!\nTitle: {{$json.title}}\nCompany: {{$json.company_name}}\nScore: {{$json.score}}\nURL: {{$json.job_url}}"
+      },
+      "name": "Telegram Notification",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [1500, 100],
+      "credentials": {
+        "telegramApi": "Telegram API"
+      }
+    },
+    {
+      "parameters": {
+        "interval": 1,
+        "unit": "days",
+        "time": "08:00"
+      },
+      "name": "Daily Summary Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [100, 500]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "database",
+        "operation": "query",
+        "databaseId": "{{your_notion_job_database_id}}",
+        "query": "filter={\"property\": \"Created Time\", \"date\": {\"on_or_after\": \"{{new Date().toISOString().split('T')[0]}}\"}}"
+      },
+      "name": "Fetch Daily Jobs",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 1,
+      "position": [300, 500],
+      "credentials": {
+        "notionApi": "Notion API"
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "smtp",
+        "fromEmail": "{{your_email}}",
+        "toEmail": "{{your_email}}",
+        "subject": "Daily Job Hunt Summary",
+        "text": "Daily job matches:\n{{#each $json}}\n- {{this.properties.Title.title[0].text.content}} at {{this.properties.Company.rich_text[0].text.content}} (Score: {{this.properties.Score.number}})\n{{/each}}"
+      },
+      "name": "Send Email Summary",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 1,
+      "position": [500, 500],
+      "credentials": {
+        "smtp": "SMTP Credentials"
+      }
+    },
+    {
+      "parameters": {
+        "interval": 1,
+        "unit": "days",
+        "time": "09:00"
+      },
+      "name": "LinkedIn Outreach Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [100, 700]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "database",
+        "operation": "query",
+        "databaseId": "{{your_notion_job_database_id}}",
+        "query": "filter={\"property\": \"Application Status\", \"select\": {\"equals\": \"Not Applied\"}}"
+      },
+      "name": "Fetch New Jobs",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 1,
+      "position": [300, 700],
+      "credentials": {
+        "notionApi": "Notion API"
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "database",
+        "operation": "query",
+        "databaseId": "{{your_notion_cache_database_id}}",
+        "query": "filter={\"and\": [{\"property\": \"Company\", \"rich_text\": {\"equals\": \"{{$json.properties.Company.rich_text[0].text.content}}\"}}, {\"property\": \"Created Time\", \"date\": {\"past_week\": {}}}]}}"
+      },
+      "name": "Check People Cache",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 1,
+      "position": [500, 700],
+      "credentials": {
+        "notionApi": "Notion API"
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "{{$node['Check People Cache'].json.length}}",
+              "operation": "equal",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "name": "No Cached People",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [700, 700]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "people",
+        "operation": "search",
+        "query": "company={{$json.properties.Company.rich_text[0].text.content}}&title=recruiter|founder|hr",
+        "options": {
+          "retryOnFail": true,
+          "maxRetries": 3,
+          "retryDelay": 1000
+        }
+      },
+      "name": "LinkedIn People Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [900, 700],
+      "credentials": {
+        "httpRequestOAuth2Api": "LinkedIn API"
+      },
+      "onError": "continue"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "database",
+        "operation": "create",
+        "databaseId": "{{your_notion_cache_database_id}}",
+        "properties": {
+          "Company": { "rich_text": [{ "text": { "content": "{{$json.properties.Company.rich_text[0].text.content}}" } }] },
+          "People": { "rich_text": [{ "text": { "content": "{{JSON.stringify($node['LinkedIn People Search'].json)}}" } }] }
+        }
+      },
+      "name": "Cache People",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 1,
+      "position": [1100, 600],
+      "credentials": {
+        "notionApi": "Notion API"
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const cached = $node['Check People Cache'].json;\nreturn cached.length ? cached.map(c => ({ json: JSON.parse(c.properties.People.rich_text[0].text.content) })) : $node['LinkedIn People Search'].items;"
+      },
+      "name": "Get Cached People",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [1100, 700]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "{{$json.linkedin_profile || ''}}",
+              "operation": "notEqual",
+              "value2": ""
+            }
+          ]
+        }
+      },
+      "name": "Check Profile Exists",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1300, 700]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "database",
+        "operation": "query",
+        "databaseId": "{{your_notion_crm_database_id}}",
+        "query": "filter={\"and\": [{\"property\": \"LinkedIn Profile\", \"url\": {\"equals\": \"{{$json.linkedin_profile}}\"}}, {\"property\": \"Date Sent\", \"date\": {\"past_month\": {}}}]}}"
+      },
+      "name": "Check Outreach History",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 1,
+      "position": [1500, 700],
+      "credentials": {
+        "notionApi": "Notion API"
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "{{$node['Check Outreach History'].json.length}}",
+              "operation": "equal",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "name": "No Recent Outreach",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1700, 700]
+    },
+    {
+      "parameters": {
+        "jsCode": "const role = ($json.title || '').toLowerCase();\nconst jobTitle = $node['Fetch New Jobs'].json.properties.Title.title[0].text.content;\nconst company = $node['Fetch New Jobs'].json.properties.Company.rich_text[0].text.content;\nlet message = '';\nif (role.includes('founder')) {\n  message = `Hi {{$json.name}}, I'm excited about ${company}'s mission and the ${jobTitle} role. My experience in AI/ML aligns with your goals. Can we discuss further?`;\n} else if (role.includes('recruiter') || role.includes('hr')) {\n  message = `Hi {{$json.name}}, I'm applying for the ${jobTitle} role at ${company}. My Python and cybersecurity skills match your needs. Can we connect to discuss?`;\n} else {\n  message = `Hi {{$json.name}}, I'm interested in the ${jobTitle} role at ${company}. My AI/ML and Python expertise could add value. Can we chat?`;\n}\nreturn { ...item.json, message, job_title: jobTitle, company_name: company };"
+      },
+      "name": "Generate Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [1900, 700]
+    },
+    {
+      "parameters": {
+        "operation": "limit",
+        "maxItems": 10
+      },
+      "name": "Limit Messages",
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [2100, 700]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "message",
+        "operation": "send",
+        "recipientId": "{{$json.linkedin_profile_id}}",
+        "message": "{{$json.message}}",
+        "options": {
+          "retryOnFail": true,
+          "maxRetries": 3,
+          "retryDelay": 1000
+        }
+      },
+      "name": "Send LinkedIn Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [2300, 700],
+      "credentials": {
+        "httpRequestOAuth2Api": "LinkedIn API"
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "database",
+        "operation": "create",
+        "databaseId": "{{your_notion_crm_database_id}}",
+        "properties": {
+          "Name": { "rich_text": [{ "text": { "content": "{{$json.name}}" } }] },
+          "Company": { "rich_text": [{ "text": { "content": "{{$json.company_name}}" } }] },
+          "LinkedIn Profile": { "url": "{{$json.linkedin_profile}}" },
+          "Message Sent": { "rich_text": [{ "text": { "content": "{{$json.message}}" } }] },
+          "Date Sent": { "date": { "start": "{{new Date().toISOString()}}" } },
+          "Follow-Up Date": { "date": { "start": "{{new Date(Date.now() + 7*24*60*60*1000).toISOString()}}" } },
+          "Status": { "select": { "name": "Awaiting Response" } }
+        }
+      },
+      "name": "Log to Notion CRM",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 1,
+      "position": [2500, 700],
+      "credentials": {
+        "notionApi": "Notion API"
+      }
+    },
+    {
+      "parameters": {
+        "interval": 1,
+        "unit": "days",
+        "time": "00:00"
+      },
+      "name": "Analytics Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [100, 900]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "database",
+        "operation": "query",
+        "databaseId": "{{your_notion_job_database_id}}",
+        "query": "filter={\"property\": \"Created Time\", \"date\": {\"past_month\": {}}}"
+      },
+      "name": "Fetch Analytics Data",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 1,
+      "position": [300, 900],
+      "credentials": {
+        "notionApi": "Notion API"
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const jobs = $json;\nconst totalApplications = jobs.length;\nconst sources = jobs.reduce((acc, job) => {\n  const source = job.properties.Source?.rich_text[0]?.text.content || 'Unknown';\n  acc[source] = (acc[source] || 0) + 1;\n  return acc;\n}, {});\nconst responseTimes = jobs.filter(j => j.properties.Status?.select.name === 'Responded' && j.properties['Application Date']?.date?.start && j.properties['Response Date']?.date?.start).map(j => (new Date(j.properties['Response Date'].date.start) - new Date(j.properties['Application Date'].date.start)) / (1000*60*60*24));\nconst avgResponseTime = responseTimes.length ? responseTimes.reduce((sum, t) => sum + t, 0) / responseTimes.length : 0;\nconst conversionRate = totalApplications ? (jobs.filter(j => j.properties.Status?.select.name === 'Interview').length / totalApplications) * 100 : 0;\nreturn [{ json: { totalApplications, sources, avgResponseTime, conversionRate } }];"
+      },
+      "name": "Calculate Analytics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [500, 900]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "resource": "database",
+        "operation": "create",
+        "databaseId": "{{your_notion_analytics_database_id}}",
+        "properties": {
+          "Date": { "date": { "start": "{{new Date().toISOString()}}" } },
+          "Total Applications": { "number": "{{$json.totalApplications}}" },
+          "Sources": { "rich_text": [{ "text": { "content": "{{JSON.stringify($json.sources)}}" } }] },
+          "Average Response Time (Days)": { "number": "{{$json.avgResponseTime}}" },
+          "Conversion Rate (%)": { "number": "{{$json.conversionRate}}" }
+        }
+      },
+      "name": "Save Analytics",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 1,
+      "position": [700, 900],
+      "credentials": {
+        "notionApi": "Notion API"
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "smtp",
+        "fromEmail": "{{your_email}}",
+        "toEmail": "{{your_email}}",
+        "subject": "Error in Job Hunting Workflow",
+        "text": "Error in {{$node.name}}:\nMessage: {{$error.message}}\nDetails: {{$error.description}}\nTimestamp: {{new Date().toISOString()}}"
+      },
+      "name": "Error Notification",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 1,
+      "position": [900, 400],
+      "credentials": {
+        "smtp": "SMTP Credentials"
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          "LinkedIn Jobs API",
+          "Adzuna API (Indeed)"
+        ]
+      ]
+    },
+    "LinkedIn Jobs API": {
+      "main": [["Merge Job Listings"]],
+      "error": [["Error Notification"]]
+    },
+    "Adzuna API (Indeed)": {
+      "main": [["Merge Job Listings"]],
+      "error": [["Error Notification"]]
+    },
+    "Merge Job Listings": {
+      "main": [["Filter Jobs"]]
+    },
+    "Filter Jobs": {
+      "main": [["Score Jobs"]]
+    },
+    "Score Jobs": {
+      "main": [["Save to Notion"]]
+    },
+    "Save to Notion": {
+      "main": [["Filter Top Matches"]]
+    },
+    "Filter Top Matches": {
+      "main": [["Telegram Notification"]]
+    },
+    "Daily Summary Trigger": {
+      "main": [["Fetch Daily Jobs"]]
+    },
+    "Fetch Daily Jobs": {
+      "main": [["Send Email Summary"]]
+    },
+    "LinkedIn Outreach Trigger": {
+      "main": [["Fetch New Jobs"]]
+    },
+    "Fetch New Jobs": {
+      "main": [["Check People Cache"]]
+    },
+    "Check People Cache": {
+      "main": [["No Cached People"]]
+    },
+    "No Cached People": {
+      "main": [["LinkedIn People Search"]]
+    },
+    "LinkedIn People Search": {
+      "main": [["Cache People", "Get Cached People"]],
+      "error": [["Error Notification"]]
+    },
+    "Cache People": {
+      "main": []
+    },
+    "Get Cached People": {
+      "main": [["Check Profile Exists"]]
+    },
+    "Check Profile Exists": {
+      "main": [["Check Outreach History"]]
+    },
+    "Check Outreach History": {
+      "main": [["No Recent Outreach"]]
+    },
+    "No Recent Outreach": {
+      "main": [["Generate Message"]]
+    },
+    "Generate Message": {
+      "main": [["Limit Messages"]]
+    },
+    "Limit Messages": {
+      "main": [["Send LinkedIn Message"]]
+    },
+    "Send LinkedIn Message": {
+      "main": [["Log to Notion CRM"]]
+    },
+    "Analytics Trigger": {
+      "main": [["Fetch Analytics Data"]]
+    },
+    "Fetch Analytics Data": {
+      "main": [["Calculate Analytics"]]
+    },
+    "Calculate Analytics": {
+      "main": [["Save Analytics"]]
+    }
+  }
+}
